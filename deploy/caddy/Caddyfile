@@ -1,0 +1,36 @@
+# Продакшн-фронт для VPS: автоматический Let's Encrypt + проксирование.
+# Подставьте свои домены и e-mail.
+{
+    email admin@example.com
+}
+
+transcriber.example.com {
+    encode zstd gzip
+    request_body {
+        max_size 512MB
+    }
+
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        root * /srv/frontend
+        try_files {path} /index.html
+        file_server
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "no-referrer"
+        Cross-Origin-Opener-Policy   "same-origin"
+        Cross-Origin-Embedder-Policy "require-corp"
+    }
+}
+
+# Панель n8n — отдельный поддомен, закрыта basic-auth самим n8n
+n8n.example.com {
+    encode zstd gzip
+    reverse_proxy n8n:5678
+}

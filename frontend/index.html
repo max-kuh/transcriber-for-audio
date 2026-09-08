@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transcriber — обрезка и расшифровка аудио</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙</text></svg>" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🎙</span><span>Transcriber</span></div>
+  <div class="topbar-right">
+    <span id="deps" class="deps" title="Состояние ASR и LLM">проверка…</span>
+    <button id="btn-settings" class="ghost" type="button">Настройки</button>
+  </div>
+</header>
+
+<main>
+  <!-- ШАГ 1 — файл -->
+  <section class="card" id="step-file">
+    <h2><span class="step">1</span> Файл</h2>
+    <div id="dropzone" class="dropzone">
+      <p><strong>Перетащите аудио или видео сюда</strong></p>
+      <p class="muted">или <label class="link" for="file-input">выберите на диске</label></p>
+      <p class="muted small">mp3, wav, ogg, m4a, flac, webm, mp4, mov — обработка идёт в вашем браузере</p>
+      <input id="file-input" type="file" accept="audio/*,video/*" hidden />
+    </div>
+    <div id="file-info" class="file-info hidden"></div>
+  </section>
+
+  <!-- ШАГ 2 — обрезка -->
+  <section class="card hidden" id="step-edit">
+    <h2><span class="step">2</span> Обрезка</h2>
+
+    <div id="waveform" class="waveform"></div>
+    <div id="timeline"></div>
+
+    <div class="transport">
+      <button id="btn-play" class="primary" type="button">▶ Воспроизвести</button>
+      <button id="btn-play-region" type="button">▶ Только выделение</button>
+      <button id="btn-select-all" type="button">Выделить всё</button>
+      <span class="spacer"></span>
+      <label class="inline">Масштаб
+        <input id="zoom" type="range" min="1" max="300" value="1" />
+      </label>
+      <span id="time" class="time">00:00.000 / 00:00.000</span>
+    </div>
+
+    <div class="range-row">
+      <label>Начало <input id="region-start" type="text" inputmode="decimal" value="0" /></label>
+      <label>Конец <input id="region-end" type="text" inputmode="decimal" value="0" /></label>
+      <span class="muted" id="region-length">длительность выделения: —</span>
+    </div>
+
+    <div class="actions">
+      <button id="btn-crop" class="primary" type="button" title="Оставить только выделенный участок">✂ Оставить выделение</button>
+      <button id="btn-cut" type="button" title="Удалить выделенный участок и склеить остаток">⤫ Вырезать выделение</button>
+      <button id="btn-fade" type="button" title="Плавное появление и затухание по краям">Fade in/out</button>
+      <button id="btn-normalize" type="button" title="Выровнять громкость до −1 dBFS">Нормализовать</button>
+      <button id="btn-undo" type="button">↶ Отменить</button>
+      <button id="btn-reset" type="button">Сбросить</button>
+      <span class="spacer"></span>
+      <button id="btn-download" type="button">⬇ Скачать WAV</button>
+    </div>
+    <p class="muted small" id="edit-status"></p>
+  </section>
+
+  <!-- ШАГ 3 — расшифровка -->
+  <section class="card hidden" id="step-transcribe">
+    <h2><span class="step">3</span> Расшифровка и постобработка</h2>
+
+    <div class="grid">
+      <label>Язык
+        <select id="opt-language">
+          <option value="">Автоопределение</option>
+          <option value="ru" selected>Русский</option>
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="uk">Українська</option>
+          <option value="kk">Қазақша</option>
+        </select>
+      </label>
+
+      <label>Модель Whisper
+        <input id="opt-model" type="text" placeholder="по умолчанию из .env" />
+      </label>
+
+      <label>Постобработка
+        <select id="opt-post">
+          <option value="none" selected>Без обработки — только текст</option>
+          <option value="summary">Краткое содержание</option>
+          <option value="minutes">Протокол встречи (решения, задачи)</option>
+          <option value="bullets">Структурированный конспект</option>
+          <option value="translate">Перевод</option>
+          <option value="custom">Своя инструкция</option>
+        </select>
+      </label>
+
+      <label id="wrap-target-lang" class="hidden">Язык перевода
+        <input id="opt-target-language" type="text" value="English" />
+      </label>
+    </div>
+
+    <label id="wrap-custom" class="hidden block">Инструкция для модели
+      <textarea id="opt-instruction" rows="3" placeholder="Например: выдели только задачи и сроки в виде таблицы"></textarea>
+    </label>
+
+    <label class="block">Подсказка распознавателю <span class="muted small">(имена, термины, аббревиатуры — повышает точность)</span>
+      <input id="opt-prompt" type="text" placeholder="Кубернетес, Иван Петров, ООО «Ромашка»" />
+    </label>
+
+    <label class="check"><input id="opt-timestamps" type="checkbox" /> Сегменты с таймкодами (нужны для SRT/VTT)</label>
+
+    <fieldset class="destinations">
+      <legend>Куда отправить результат</legend>
+      <label class="check"><input type="checkbox" class="dest" value="telegram" /> Telegram</label>
+      <input id="opt-tg-chat" type="text" placeholder="chat_id (пусто = из .env)" />
+      <label class="check"><input type="checkbox" class="dest" value="webhook" /> Внешняя ручка (webhook)</label>
+      <input id="opt-webhook" type="url" placeholder="https://example.com/hook (пусто = из .env)" />
+      <label class="check"><input type="checkbox" class="dest" value="n8n" /> Передать результат в n8n</label>
+    </fieldset>
+
+    <div class="actions">
+      <button id="btn-send" class="primary big" type="button">Отправить на расшифровку</button>
+      <span id="send-status" class="muted"></span>
+    </div>
+
+    <div id="progress-wrap" class="progress hidden"><div id="progress-bar"></div></div>
+  </section>
+
+  <!-- ШАГ 4 — результат -->
+  <section class="card hidden" id="step-result">
+    <h2><span class="step">4</span> Результат</h2>
+    <div class="tabs">
+      <button class="tab active" data-tab="text" type="button">Расшифровка</button>
+      <button class="tab" data-tab="post" type="button">Постобработка</button>
+      <button class="tab" data-tab="segments" type="button">Сегменты</button>
+      <button class="tab" data-tab="delivery" type="button">Доставка</button>
+    </div>
+    <div id="tab-text" class="tabpanel"><pre id="out-text"></pre></div>
+    <div id="tab-post" class="tabpanel hidden"><pre id="out-post"></pre></div>
+    <div id="tab-segments" class="tabpanel hidden"><pre id="out-segments"></pre></div>
+    <div id="tab-delivery" class="tabpanel hidden"><pre id="out-delivery"></pre></div>
+
+    <div class="actions">
+      <button id="btn-copy" type="button">Скопировать</button>
+      <a id="dl-txt" class="btn" download>TXT</a>
+      <a id="dl-md" class="btn" download>Markdown</a>
+      <a id="dl-srt" class="btn" download>SRT</a>
+      <a id="dl-vtt" class="btn" download>VTT</a>
+      <button id="btn-redeliver" type="button">Отправить повторно</button>
+    </div>
+  </section>
+</main>
+
+<!-- Настройки -->
+<dialog id="settings">
+  <form method="dialog">
+    <h3>Настройки клиента</h3>
+    <label class="block">API-ключ <span class="muted small">(если в .env задан API_KEY)</span>
+      <input id="set-api-key" type="password" placeholder="X-API-Key" />
+    </label>
+    <p class="muted small">Ключ хранится только в localStorage этого браузера.</p>
+    <menu>
+      <button value="cancel">Закрыть</button>
+      <button id="set-save" value="save" class="primary">Сохранить</button>
+    </menu>
+  </form>
+</dialog>
+
+<footer class="muted small">
+  Обрезка, сведение в моно и ресемплинг выполняются локально в браузере. На сервер уходит только итоговый фрагмент.
+</footer>
+
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

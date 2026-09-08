@@ -1,0 +1,151 @@
+# Transcriber — базовый стек (CPU). Запуск: docker compose up -d
+# GPU: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+name: transcriber
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # --------------------------------------------------------------------------
+  # Фронтенд: статика (обрезка аудио целиком в браузере), раздаётся nginx
+  # --------------------------------------------------------------------------
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: tr-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # Backend API: приём файла, очередь задач, оркестрация ASR -> LLM -> доставка
+  # --------------------------------------------------------------------------
+  api:
+    build: ./backend
+    container_name: tr-api
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      APP_ROLE: api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # Worker: длительные задачи (транскрипция, постобработка, доставка)
+  # --------------------------------------------------------------------------
+  worker:
+    build: ./backend
+    container_name: tr-worker
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      APP_ROLE: worker
+    command: ["arq", "app.worker.WorkerSettings"]
+    volumes:
+      - ./data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # Очередь / состояние задач
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: tr-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # ASR: Speaches (faster-whisper) с OpenAI-совместимым /v1/audio/transcriptions
+  # --------------------------------------------------------------------------
+  asr:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: tr-asr
+    restart: unless-stopped
+    environment:
+      WHISPER__MODEL: ${WHISPER__MODEL:-Systran/faster-whisper-small}
+      WHISPER__COMPUTE_TYPE: ${WHISPER__COMPUTE_TYPE:-int8}
+      WHISPER__INFERENCE_DEVICE: ${WHISPER__INFERENCE_DEVICE:-cpu}
+      STT_MODEL_TTL: ${STT_MODEL_TTL:--1}
+      ENABLE_UI: "false"
+    ports:
+      - "${ASR_PORT:-8001}:8000"
+    volumes:
+      - hf-cache:/home/ubuntu/.cache/huggingface
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # LLM: Ollama для суммаризации и постобработки (можно заменить на внешний API)
+  # --------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tr-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # n8n: визуальный оркестратор (альтернативный конвейер, PIPELINE_MODE=n8n)
+  # --------------------------------------------------------------------------
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: tr-n8n
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Moscow}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      NODE_FUNCTION_ALLOW_BUILTIN: "*"
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+      - ./data:/data
+    logging: *default-logging
+
+volumes:
+  redis-data:
+  ollama-data:
+  n8n-data:
+  hf-cache:

@@ -1,0 +1,32 @@
+# Продакшн-оверрайд для VPS: Caddy с TLS вместо публикации портов наружу.
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: tr-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend:/srv/frontend:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [api, n8n]
+
+  # Внутренние сервисы больше не торчат на 0.0.0.0
+  frontend:
+    profiles: ["disabled"]
+  api:
+    ports: !override []
+  asr:
+    ports: !override []
+  ollama:
+    ports: !override []
+  n8n:
+    ports: !override []
+
+volumes:
+  caddy-data:
+  caddy-config:
