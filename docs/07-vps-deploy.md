@@ -122,7 +122,7 @@ sudo systemctl enable --now transcriber
 | Обновления | `docker compose pull && make up-prod`; закрепите теги образов вместо `latest` перед продакшном |
 | Секреты | `.env` с правами 600, вне git (`.gitignore`) |
 
-Дополнительно стоит поставить fail2ban на SSH и ограничить размер тела запроса (уже сделано: 512 МБ в nginx, 512 МБ в Caddy, `MAX_UPLOAD_MB` в API).
+Дополнительно стоит поставить fail2ban на SSH и ограничить размер тела запроса (уже сделано: 1024 МБ в nginx, 1024 МБ в Caddy, `MAX_UPLOAD_MB` в API).
 
 ## Ресурсные лимиты
 

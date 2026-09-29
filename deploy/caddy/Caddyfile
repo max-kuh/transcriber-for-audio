@@ -7,7 +7,7 @@
 transcriber.example.com {
     encode zstd gzip
     request_body {
-        max_size 512MB
+        max_size 1024MB
     }
 
     handle /api/* {

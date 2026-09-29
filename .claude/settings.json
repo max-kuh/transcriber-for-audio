@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "ask": [
+      "Read(./for_trans/**)",
+      "Edit(./for_trans/**)",
+      "Write(./for_trans/**)"
+    ]
+  }
+}

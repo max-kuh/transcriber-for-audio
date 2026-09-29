@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8080"
     cors_origins: str = "http://localhost:8080"
     api_key: str = ""
-    max_upload_mb: int = 512
+    max_upload_mb: int = 1024
     retention_hours: int = 24
     data_dir: str = "/data"
     pipeline_mode: Literal["direct", "n8n"] = "direct"

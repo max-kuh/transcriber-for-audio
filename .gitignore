@@ -7,3 +7,6 @@ __pycache__/
 .DS_Store
 node_modules/
 .pytest_cache/
+
+# Пользовательские записи для расшифровки — не коммитить
+for_trans/
