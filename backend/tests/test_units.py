@@ -2,6 +2,7 @@
 
 Запуск:  cd backend && python -m pytest tests -q
 """
+import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,55 @@ def test_long_text_split_keeps_all_content():
     assert "".join(chunks).replace("\n", "") == text.replace("\n", "")
 
 
+def test_unbroken_whisper_text_is_split():
+    # Whisper отдаёт текст одной строкой — раньше он уходил в LLM целиком
+    text = "так значит поехали у нас интервью " * 2000
+    chunks = llm._split(text, size=5000)
+    assert len(chunks) > 1
+    assert all(len(c) <= 5000 for c in chunks)
+    assert "".join(chunks) == text
+
+
+def test_split_prefers_sentence_boundaries():
+    text = ("Первое предложение про Kafka. " * 100) + ("Второе про Redis. " * 100)
+    chunks = llm._split(text, size=1000)
+    assert all(c.rstrip().endswith(".") for c in chunks)
+
+
+# --- нормализация -----------------------------------------------------------
+def test_normalize_keeps_timestamps_and_falls_back(monkeypatch):
+    async def fake_chat(messages):
+        assert "СТРОКИ:" in messages[-1]["content"]
+        # вторую строку модель «потеряла», третью — вернула с мусором вокруг
+        return "Вот результат:\n1| Middle-аналитик, привет.\n3| Пишем в Kafka.\nспасибо"
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    segments = [
+        Segment(start=0, end=1, text="металл аналитик привет"),
+        Segment(start=1, end=2, text="это не трогаем"),
+        Segment(start=2, end=3, text="пишем в кавку"),
+    ]
+    fixed, text = asyncio.run(llm.normalize(segments, "игнорируется"))
+    assert [s.text for s in fixed] == ["Middle-аналитик, привет.", "это не трогаем", "Пишем в Kafka."]
+    assert [(s.start, s.end) for s in fixed] == [(0, 1), (1, 2), (2, 3)]
+    assert text == "Middle-аналитик, привет. это не трогаем Пишем в Kafka."
+
+
+def test_normalize_batch_failure_keeps_original(monkeypatch):
+    async def broken_chat(messages):
+        raise llm.LLMError("LLM 500")
+
+    monkeypatch.setattr(llm, "_chat", broken_chat)
+    segments = [Segment(start=0, end=1, text="кавка")]
+    fixed, text = asyncio.run(llm.normalize(segments, "кавка"))
+    assert fixed[0].text == "кавка" and text == "кавка"
+
+
+def test_glossary_is_bundled():
+    assert "Kafka" in llm.glossary()
+    assert not any(line.startswith("#") for line in llm.glossary().splitlines())
+
+
 # --- промпты ----------------------------------------------------------------
 @pytest.mark.parametrize("action", ["summary", "minutes", "bullets", "translate", "custom"])
 def test_every_action_builds_prompt(action):
@@ -102,8 +152,41 @@ def test_options_defaults():
     assert options.post_action == "none"
     assert options.destinations == []
     assert options.timestamps is False
+    assert options.normalize is None
 
 
 def test_options_rejects_unknown_action():
     with pytest.raises(ValueError):
         JobOptions.model_validate({"post_action": "нет-такого"})
+
+
+# --- ASR: зацикливание и нарезка ---------------------------------------------
+def test_loop_score_separates_loop_from_speech():
+    from app import asr
+
+    speech = (
+        "Клиент оформляет возврат в личном кабинете, затем сдаёт товар в пункт выдачи. "
+        "Система возвратов проверяет заявку, пишет событие в Kafka, а сервис уведомлений "
+        "сообщает клиенту о решении. Деньги возвращает платёжный шлюз банка-эквайера. "
+    )
+    assert asr.loop_score(speech) < 4.0
+    assert asr.loop_score(speech + "вот так, " * 200) > 4.0
+
+
+def test_cut_points_follow_pauses():
+    from app import audio
+
+    pauses = [(595.0, 597.0), (1210.0, 1212.0), (1790.0, 1792.0)]
+    assert audio.cut_points(2400, pauses, 600) == [596.0, 1211.0, 1791.0]
+    # без пауз режем ровно по сетке; хвост короче 1.5×target не отрезается
+    assert audio.cut_points(1000, [], 600) == [600.0]
+    assert audio.cut_points(800, [], 600) == []
+
+
+def test_normalize_rejects_inflated_line(monkeypatch):
+    async def looping_chat(messages):
+        return "1| " + "вот так, " * 100
+
+    monkeypatch.setattr(llm, "_chat", looping_chat)
+    fixed, _ = asyncio.run(llm.normalize([Segment(start=0, end=1, text="вот так")], ""))
+    assert fixed[0].text == "вот так"

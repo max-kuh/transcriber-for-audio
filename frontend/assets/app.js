@@ -248,6 +248,7 @@ function collectOptions() {
     model: $("opt-model").value.trim() || null,
     prompt: $("opt-prompt").value.trim() || null,
     timestamps: $("opt-timestamps").checked,
+    normalize: $("opt-normalize").checked,
     post_action: $("opt-post").value,
     post_instruction: $("opt-instruction").value.trim() || null,
     target_language: $("opt-target-language").value.trim() || null,

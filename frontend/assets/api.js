@@ -24,6 +24,7 @@ export const api = {
 
   deps: () => fetch(`${BASE}/health/deps`, { headers: headers() }).then(json),
 
+  /** options — JobOptions из docs/06-api.md (language, prompt, timestamps, normalize, post_action…). */
   createJob(blob, filename, options) {
     const form = new FormData();
     form.append("file", blob, filename);

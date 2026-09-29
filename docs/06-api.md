@@ -44,6 +44,7 @@
 | `model` | string / null | null | Переопределить модель Whisper |
 | `prompt` | string / null | null | Подсказка распознавателю: имена, термины |
 | `timestamps` | bool | false | Вернуть сегменты (нужно для SRT/VTT) |
+| `normalize` | bool / null | null | LLM-нормализация: пунктуация и термины по глоссарию. null = `NORMALIZE_DEFAULT` из `.env` |
 | `post_action` | enum | `none` | `none` `summary` `minutes` `bullets` `translate` `custom` |
 | `post_instruction` | string | null | Инструкция для `custom` |
 | `target_language` | string | null | Для `translate` |
@@ -69,7 +70,7 @@ curl -X POST http://localhost:8000/api/v1/jobs \
 
 ## `GET /jobs/{id}`
 
-Полное состояние задачи: `status`, `progress`, `result.text`, `result.segments`, `result.post_output`, `result.delivery`, `error`.
+Полное состояние задачи: `status`, `progress`, `result.text`, `result.raw_text` (текст ASR до нормализации, если она была), `result.segments`, `result.post_output`, `result.delivery`, `error`.
 
 Опрашивайте раз в 1–2 секунды до `done` или `failed`. Задача живёт `RETENTION_HOURS` часов, затем возвращается `404`.
 

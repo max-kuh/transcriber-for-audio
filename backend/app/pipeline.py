@@ -74,24 +74,44 @@ async def process(job_id: str, storage: Storage) -> None:
             await storage.update(job.id, status="done", progress=100, result=result)
             return
 
+        normalize = (
+            settings.normalize_default if job.options.normalize is None else job.options.normalize
+        )
+
         # --- 1. Распознавание ---
         await storage.update(job.id, status="transcribing", progress=15)
-        asr_result = await asr.transcribe(path, job.options)
+
+        async def asr_progress(done: int, total: int) -> None:
+            await storage.update(job.id, progress=15 + 35 * done // total)
+
+        asr_result = await asr.transcribe(
+            path, job.options, with_segments=normalize, on_progress=asr_progress
+        )
         result = JobResult(
             text=asr_result["text"],
             segments=[Segment(**s) for s in asr_result["segments"]],
             language=asr_result["language"],
             duration=asr_result["duration"],
         )
-        job = await storage.update(job.id, progress=60, result=result)
+        job = await storage.update(job.id, progress=50, result=result)
 
-        # --- 2. Постобработка ---
+        # --- 2. Нормализация: пунктуация и термины по глоссарию ---
+        if normalize and result.text:
+            await storage.update(job.id, status="postprocessing", progress=55)
+            result.raw_text = result.text
+            result.segments, result.text = await llm.normalize(result.segments, result.text)
+            job = await storage.update(job.id, progress=70, result=result)
+        if not job.options.timestamps:
+            # сегменты запрашивались только ради нормализации — в ответ не отдаём
+            result.segments = []
+
+        # --- 3. Постобработка ---
         if job.options.post_action != "none":
-            await storage.update(job.id, status="postprocessing", progress=70)
+            await storage.update(job.id, status="postprocessing", progress=75)
             result.post_output = await llm.postprocess(result.text, job.options)
             job = await storage.update(job.id, progress=85, result=result)
 
-        # --- 3. Доставка ---
+        # --- 4. Доставка ---
         if job.options.destinations:
             await storage.update(job.id, status="delivering", progress=90)
             result.delivery = await delivery.dispatch(job)

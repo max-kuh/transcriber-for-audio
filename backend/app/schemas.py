@@ -17,6 +17,9 @@ class JobOptions(BaseModel):
     prompt: str | None = Field(None, description="initial_prompt — подсказка с терминами/именами")
     timestamps: bool = Field(False, description="Вернуть сегменты с таймкодами")
     diarize: bool = Field(False, description="Разделение по говорящим (если ASR поддерживает)")
+    normalize: bool | None = Field(
+        None, description="LLM-нормализация: пунктуация и термины по глоссарию. None = NORMALIZE_DEFAULT"
+    )
 
     post_action: PostAction = "none"
     post_instruction: str | None = Field(None, description="Своя инструкция для post_action=custom")
@@ -37,6 +40,7 @@ class Segment(BaseModel):
 
 class JobResult(BaseModel):
     text: str = ""
+    raw_text: str | None = Field(None, description="Текст ASR до нормализации (если она была)")
     segments: list[Segment] = Field(default_factory=list)
     language: str | None = None
     duration: float | None = None
