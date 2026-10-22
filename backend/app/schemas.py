@@ -20,7 +20,9 @@ class JobOptions(BaseModel):
     diarize: bool | None = Field(
         None, description="Разделение по говорящим (сервис diarizer). None = DIARIZE_DEFAULT"
     )
-    num_speakers: int | None = Field(None, ge=1, le=20, description="Число говорящих, если известно")
+    num_speakers: int | None = Field(
+        None, ge=0, le=20, description="Число говорящих. None = DIARIZE_NUM_SPEAKERS, 0 = автоподбор"
+    )
     raw: bool = Field(False, description="Файл загружен как есть: сервер сам извлечёт и сожмёт звук")
     trim_start: float | None = Field(None, ge=0, description="Начало фрагмента, с (серверная обрезка)")
     trim_end: float | None = Field(None, ge=0, description="Конец фрагмента, с (серверная обрезка)")

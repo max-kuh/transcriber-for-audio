@@ -69,7 +69,7 @@ curl -X PUT http://localhost:8000/api/v1/admin/pipeline-mode   -H "X-API-Key: $A
 | `prompt` | string / null | null | Подсказка распознавателю: имена, термины |
 | `timestamps` | bool | false | Вернуть сегменты (нужно для SRT/VTT) |
 | `diarize` | bool / null | null | Разделение по говорящим. null = `DIARIZE_DEFAULT` (по умолчанию включено, если задан `DIARIZE_BASE_URL`). Текст результата становится диалогом «Спикер 1: …», у сегментов заполняется `speaker` |
-| `num_speakers` | int / null | null | Число говорящих, если известно (повышает точность) |
+| `num_speakers` | int / null | null | Число говорящих. null = `DIARIZE_NUM_SPEAKERS` из `.env` (по умолчанию 2), `0` = автоподбор порогом `DIARIZER_THRESHOLD` |
 | `raw` | bool | false | Файл загружен как есть (видео, большие записи): сервер сам извлечёт звук ffmpeg → 16 кГц моно Opus |
 | `trim_start` / `trim_end` | float / null | null | Серверная обрезка, секунды. Работает вместе с `raw` или отдельно |
 | `normalize` | bool / null | null | LLM-нормализация: пунктуация и термины по глоссарию. null = `NORMALIZE_DEFAULT` из `.env` |

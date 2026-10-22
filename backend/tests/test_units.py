@@ -311,3 +311,14 @@ def test_pipeline_uses_mode_frozen_in_job(store, monkeypatch):
     done = asyncio.run(scenario())
     assert called == ["test"]
     assert done.status == "done" and done.result.text == "из n8n"
+
+
+@pytest.mark.parametrize(
+    ("requested", "default", "expected"),
+    [(None, 2, 2), (3, 2, 3), (0, 2, None), (None, 0, None)],
+)
+def test_num_speakers_default(monkeypatch, requested, default, expected):
+    from app import pipeline
+
+    monkeypatch.setattr(pipeline.settings, "diarize_num_speakers", default)
+    assert pipeline._num_speakers(JobOptions(num_speakers=requested)) == expected

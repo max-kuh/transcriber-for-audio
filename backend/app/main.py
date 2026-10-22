@@ -87,6 +87,7 @@ async def public_config(store: Storage = Depends(storage)) -> dict:
         "pipeline_mode": await store.get_pipeline_mode(),
         "diarize_available": diarize.available(),
         "diarize_default": settings.diarize_default and diarize.available(),
+        "diarize_num_speakers": settings.diarize_num_speakers,
         "auth_required": bool(settings.api_key),
         "telegram_configured": bool(settings.telegram_bot_token),
         "webhook_configured": bool(settings.outbound_webhook_url),

@@ -46,3 +46,59 @@
 Swagger
 REST API
 Sequence diagram
+
+# --- R-009 (интервью системного аналитика, 2026-10-22) ---
+адемпатентность, демпатентный, этим патентностью → идемпотентность
+ключ адемпатентности → Idempotency-Key
+Appigateway, аппигейтвей → API Gateway
+графана локи → Grafana Loki
+промтейл → Promtail
+Прометеус → Prometheus
+джин-индекс → GIN-индекс (не путать с JSON)
+B3, бэ три → B-tree
+РСТ, РСТе, Ресте → REST
+SOP → SOAP
+QSDL → WSDL
+GraphQA → GraphQL
+лагер, флагер, свагер → Swagger
+юзерсторий, юзер стария, юзер-стори → user story
+юз кейсы → use cases
+секенс, секвенс → Sequence
+си 4, просить 4 → C4 (уровни: Context, Container, Component, Code)
+биппмн, пикмент, пимин → BPMN
+джири → Jira
+конфлюенс → Confluence
+рельсионки → реляционки
+click-house → ClickHouse
+Кассандра → Cassandra
+white column → wide column
+Reddit → Rabbit (если речь о брокерах сообщений)
+фанаут → fanout
+пулл-модель, пуш-модель → pull-модель, push-модель
+форинги → foreign keys
+праймерики → primary keys
+explainalize → EXPLAIN ANALYZE
+подгресс → Postgres
+дунахтин → DO NOTHING
+регистрация и хореография → оркестрация и хореография (паттерн Saga)
+паундер контекст, обаундер контекст, банк контекст → Bounded context
+Домейн-дизайн → Domain-driven design
+ливнас, рединас → liveness, readiness
+хелс-чеки → health checks
+кап-теорема → CAP-теорема
+мастер-слейт → Master-Slave
+кубернетис, кубер → Kubernetes
+смог-тестирование → смоук-тестирование
+прогрессионное тестирование → регрессионное тестирование
+продукт-оунар → Product Owner
+спинт → спринт
+скрам-банк → Scrumban
+ESO → SLO (рядом с SLI)
+Fluent D → Fluentd
+Елка → ELK
+Classic Search, LoxD → Elasticsearch, Logstash
+слэш метрикс → /metrics
+двух соток, пяти соток → 200-х, 500-х (HTTP-коды)
+надплость → надстройка
+remote procedure core → remote procedure call
+мастхэх → must-have

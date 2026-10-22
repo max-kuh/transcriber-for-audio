@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # Пустой URL = диаризация недоступна. Включена по умолчанию, если сервис задан
     diarize_base_url: str = "http://diarizer:8000"
     diarize_default: bool = True
+    # Число говорящих, если в задаче не задано своё. 0 = подбирать порогом DIARIZER_THRESHOLD
+    diarize_num_speakers: int = 2
 
     # --- доставка ---
     telegram_bot_token: str = ""

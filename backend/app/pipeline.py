@@ -62,6 +62,12 @@ async def _no_turns() -> list:
     return []
 
 
+def _num_speakers(opts) -> int | None:
+    """None в задаче — DIARIZE_NUM_SPEAKERS; 0 (в задаче или в .env) — автоподбор порогом."""
+    n = settings.diarize_num_speakers if opts.num_speakers is None else opts.num_speakers
+    return n or None
+
+
 async def process(job_id: str, storage: Storage) -> None:
     job = await storage.get(job_id)
     if job is None:
@@ -105,7 +111,7 @@ async def process(job_id: str, storage: Storage) -> None:
             asr.transcribe(
                 source, job.options, with_segments=normalize or want_diarize, on_progress=asr_progress
             ),
-            diarize.turns(source, opts.num_speakers) if want_diarize else _no_turns(),
+            diarize.turns(source, _num_speakers(opts)) if want_diarize else _no_turns(),
         )
         result = JobResult(
             text=asr_result["text"],

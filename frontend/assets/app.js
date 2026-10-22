@@ -268,6 +268,9 @@ function bindTranscribe() {
   api.config().then((c) => {
     $("opt-diarize").checked = !!c.diarize_default;
     $("opt-diarize").disabled = !c.diarize_available;
+    $("opt-speakers").placeholder = c.diarize_num_speakers
+      ? `сколько? (по умолчанию ${c.diarize_num_speakers}, 0 — автоподбор)`
+      : "сколько? (по умолчанию — автоподбор)";
   }).catch(() => {});
 }
 
@@ -279,7 +282,8 @@ function collectOptions() {
     timestamps: $("opt-timestamps").checked,
     normalize: $("opt-normalize").checked,
     diarize: $("opt-diarize").checked,
-    num_speakers: parseInt($("opt-speakers").value, 10) || null,
+    // пусто — DIARIZE_NUM_SPEAKERS на сервере, 0 — автоподбор
+    num_speakers: $("opt-speakers").value === "" ? null : parseInt($("opt-speakers").value, 10),
     raw: state.raw,
     trim_start: state.raw ? parseTime($("raw-start").value) : null,
     trim_end: state.raw ? parseTime($("raw-end").value) : null,
