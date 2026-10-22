@@ -7,7 +7,9 @@ help: ## Список команд
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 init: ## Создать .env из шаблона
-	@test -f .env || cp .env.example .env; echo "готово: отредактируйте .env"
+	@test -f .env || cp .env.example .env
+	@test -f deploy/oauth2-proxy/emails.txt || cp deploy/oauth2-proxy/emails.txt.example deploy/oauth2-proxy/emails.txt
+	@echo "готово: отредактируйте .env и deploy/oauth2-proxy/emails.txt"
 
 up: ## Поднять весь стек (CPU)
 	$(COMPOSE) up -d --build
@@ -15,7 +17,7 @@ up: ## Поднять весь стек (CPU)
 up-gpu: ## Поднять стек с NVIDIA GPU
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 
-up-prod: ## Поднять на VPS за Caddy (TLS)
+up-prod: ## Поднять за Caddy + oauth2-proxy (VPS или локально с SITE_ADDRESS=:80)
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 down: ## Остановить

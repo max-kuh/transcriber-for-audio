@@ -10,7 +10,7 @@
 | `backend/app/` | FastAPI (`main.py`) + arq-воркер (`worker.py`). Конвейер — `pipeline.py`, клиенты — `asr.py`, `llm.py`, `delivery.py`, промпты — `prompts.py` |
 | `n8n/workflows/` | Экспортированные workflow. Правки в UI выгружать обратно: `n8n export:workflow --all --separate --output=/workflows` |
 | `docs/` | Пользовательские инструкции. При изменении поведения обновлять соответствующий файл |
-| `deploy/` | nginx (dev) и Caddy (prod) |
+| `deploy/` | nginx (dev), Caddy и oauth2-proxy (prod; `/workflows`, `/admin` закрыты входом) |
 
 ## Правила
 

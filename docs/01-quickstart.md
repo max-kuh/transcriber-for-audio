@@ -54,7 +54,7 @@ curl -s http://localhost:8001/v1/models | python3 -m json.tool
 ## Шаг 4. Модель постобработки
 
 ```bash
-make pull-llm    # тянет модель из LLM_MODEL, по умолчанию qwen2.5:7b-instruct
+make pull-llm    # тянет модель из LLM_MODEL, по умолчанию gemma3:12b
 ```
 
 Проверка:

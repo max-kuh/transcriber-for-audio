@@ -26,6 +26,8 @@
       <p class="muted small">mp3, wav, ogg, m4a, flac, webm, mp4, mov — обработка идёт в вашем браузере</p>
       <input id="file-input" type="file" accept="audio/*,video/*" hidden />
     </div>
+    <label class="check"><input id="opt-raw" type="checkbox" /> Загрузить на сервер как есть — для больших файлов и видео (без обрезки в браузере)</label>
+    <p class="muted small">Файлы больше 300 МБ и файлы, которые браузер не смог декодировать, переключаются в этот режим автоматически.</p>
     <div id="file-info" class="file-info hidden"></div>
   </section>
 
@@ -70,6 +72,12 @@
   <section class="card hidden" id="step-transcribe">
     <h2><span class="step">3</span> Расшифровка и постобработка</h2>
 
+    <div id="raw-trim" class="range-row hidden">
+      <span class="muted">Файл уйдёт на сервер целиком; звук извлечёт ffmpeg.</span>
+      <label>Начало <input id="raw-start" type="text" placeholder="0:00 (пусто = с начала)" /></label>
+      <label>Конец <input id="raw-end" type="text" placeholder="1:23:45 (пусто = до конца)" /></label>
+    </div>
+
     <div class="grid">
       <label>Язык
         <select id="opt-language">
@@ -113,6 +121,8 @@
     </label>
 
     <label class="check"><input id="opt-timestamps" type="checkbox" /> Сегменты с таймкодами (нужны для SRT/VTT)</label>
+    <label class="check"><input id="opt-diarize" type="checkbox" checked /> Разделить по говорящим (диаризация)
+      <input id="opt-speakers" type="number" min="1" max="20" placeholder="сколько? (необязательно)" /></label>
     <label class="check"><input id="opt-normalize" type="checkbox" checked /> Нормализовать текст: пунктуация и термины по глоссарию (LLM)</label>
 
     <fieldset class="destinations">
@@ -173,7 +183,8 @@
 </dialog>
 
 <footer class="muted small">
-  Обрезка, сведение в моно и ресемплинг выполняются локально в браузере. На сервер уходит только итоговый фрагмент.
+  Обычно обрезка, сведение в моно и ресемплинг выполняются локально в браузере и на сервер уходит только итоговый фрагмент.
+  В режиме «как есть» файл загружается целиком, а звук обрабатывает сервер.
 </footer>
 
 <script type="module" src="assets/app.js"></script>

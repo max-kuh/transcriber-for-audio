@@ -61,6 +61,8 @@ services:
     environment:
       APP_ROLE: worker
     command: ["arq", "app.worker.WorkerSettings"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Ollama на хосте: LLM_BASE_URL=http://host.docker.internal:11434/v1
     volumes:
       - ./data:/data
     depends_on:
@@ -102,6 +104,18 @@ services:
       - "${ASR_PORT:-8001}:8000"
     volumes:
       - hf-cache:/home/ubuntu/.cache/huggingface
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # Диаризация: кто говорит (sherpa-onnx, CPU). Адрес — DIARIZE_BASE_URL
+  # --------------------------------------------------------------------------
+  diarizer:
+    build: ./diarizer
+    container_name: tr-diarizer
+    restart: unless-stopped
+    environment:
+      DIARIZER_THREADS: ${DIARIZER_THREADS:-4}
+      DIARIZER_THRESHOLD: ${DIARIZER_THRESHOLD:-0.5}
     logging: *default-logging
 
   # --------------------------------------------------------------------------

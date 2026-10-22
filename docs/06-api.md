@@ -25,6 +25,30 @@
 
 Публичная конфигурация для фронтенда: лимит загрузки, имена моделей, включена ли авторизация, настроены ли Telegram и webhook.
 
+`pipeline_mode` в `/health` и `/config` — действующий режим для новых задач (см. ниже), а не значение `PIPELINE_MODE` из `.env`.
+
+---
+
+## Администрирование
+
+Требуют `X-API-Key`, как и `/jobs*`. В prod (`docker-compose.prod.yml`) Caddy дополнительно пускает на `/api/v1/admin/*` только сессию oauth2-proxy: без неё — `401`.
+
+### `GET /admin/pipeline-mode`
+
+```json
+{"mode": "direct", "default": "direct"}
+```
+
+`mode` — режим, в котором пойдут новые задачи; `default` — `PIPELINE_MODE` из `.env` (действует, пока режим не переключали).
+
+### `PUT /admin/pipeline-mode`
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/admin/pipeline-mode   -H "X-API-Key: $API_KEY" -H "Content-Type: application/json"   -d '{"mode": "n8n"}'
+```
+
+`mode`: `direct` или `n8n` (иначе `422`). Ответ — то же состояние, что у `GET`. Перезапуск не нужен: режим хранится в Redis и читается при создании каждой задачи. Он записывается в задачу (`pipeline_mode` в `GET /jobs/{id}`), поэтому задачи, уже стоящие в очереди, дойдут в том режиме, в котором были созданы.
+
 ---
 
 ## `POST /jobs`
@@ -44,6 +68,10 @@
 | `model` | string / null | null | Переопределить модель Whisper |
 | `prompt` | string / null | null | Подсказка распознавателю: имена, термины |
 | `timestamps` | bool | false | Вернуть сегменты (нужно для SRT/VTT) |
+| `diarize` | bool / null | null | Разделение по говорящим. null = `DIARIZE_DEFAULT` (по умолчанию включено, если задан `DIARIZE_BASE_URL`). Текст результата становится диалогом «Спикер 1: …», у сегментов заполняется `speaker` |
+| `num_speakers` | int / null | null | Число говорящих, если известно (повышает точность) |
+| `raw` | bool | false | Файл загружен как есть (видео, большие записи): сервер сам извлечёт звук ffmpeg → 16 кГц моно Opus |
+| `trim_start` / `trim_end` | float / null | null | Серверная обрезка, секунды. Работает вместе с `raw` или отдельно |
 | `normalize` | bool / null | null | LLM-нормализация: пунктуация и термины по глоссарию. null = `NORMALIZE_DEFAULT` из `.env` |
 | `post_action` | enum | `none` | `none` `summary` `minutes` `bullets` `translate` `custom` |
 | `post_instruction` | string | null | Инструкция для `custom` |
@@ -59,6 +87,8 @@
 {"id": "9f2c1d…", "status": "queued"}
 ```
 
+Если сервис диаризации недоступен, задача не падает: результат приходит без разделения по говорящим.
+
 Ошибки: `413` — файл больше `MAX_UPLOAD_MB`; `422` — пустой файл или битые `options`; `401` — нет/неверный `X-API-Key`.
 
 ```bash
@@ -70,7 +100,7 @@ curl -X POST http://localhost:8000/api/v1/jobs \
 
 ## `GET /jobs/{id}`
 
-Полное состояние задачи: `status`, `progress`, `result.text`, `result.raw_text` (текст ASR до нормализации, если она была), `result.segments`, `result.post_output`, `result.delivery`, `error`.
+Полное состояние задачи: `status`, `progress`, `pipeline_mode` (режим, зафиксированный при создании), `result.text`, `result.raw_text` (текст ASR до нормализации, если она была), `result.segments`, `result.post_output`, `result.delivery`, `error`.
 
 Опрашивайте раз в 1–2 секунды до `done` или `failed`. Задача живёт `RETENTION_HOURS` часов, затем возвращается `404`.
 

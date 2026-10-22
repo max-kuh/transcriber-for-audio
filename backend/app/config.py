@@ -1,8 +1,9 @@
 """Конфигурация сервиса. Все значения читаются из переменных окружения (.env)."""
 from functools import lru_cache
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .schemas import PipelineMode
 
 
 class Settings(BaseSettings):
@@ -15,7 +16,8 @@ class Settings(BaseSettings):
     max_upload_mb: int = 1024
     retention_hours: int = 24
     data_dir: str = "/data"
-    pipeline_mode: Literal["direct", "n8n"] = "direct"
+    # Значение по умолчанию; действующий режим хранится в Redis и переключается через /admin
+    pipeline_mode: PipelineMode = "direct"
 
     # --- ASR ---
     asr_base_url: str = "http://asr:8000/v1"
@@ -34,16 +36,27 @@ class Settings(BaseSettings):
     # --- LLM ---
     llm_base_url: str = "http://ollama:11434/v1"
     llm_api_key: str = "ollama"
-    llm_model: str = "qwen2.5:7b-instruct"
+    llm_model: str = "gemma3:12b"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 2048
+    # Для «думающих» моделей (gemma4, qwen3…): none/low/medium/high. Пусто = параметр не передаётся
+    llm_reasoning_effort: str = ""
     # Кусок текста на один запрос постобработки (символы; ~1 000 символов ≈ 1 мин речи)
     llm_chunk_chars: int = 12_000
 
     # --- нормализация (пунктуация + термины по глоссарию) ---
     normalize_default: bool = True
-    normalize_chunk_chars: int = 2_500
+    # Крупная пачка = меньше запросов и больше контекста для исправления терминов;
+    # 8 000 символов ≈ 3.6k токенов на вход и столько же на выход (нужен контекст ≥ 12k)
+    normalize_chunk_chars: int = 8_000
+    # Потолок токенов ответа на пачку; 0 = считать от размера пачки
+    normalize_max_tokens: int = 0
     glossary_file: str = ""  # пусто = встроенный app/glossary.txt
+
+    # --- диаризация (сервис diarizer, см. diarizer/) ---
+    # Пустой URL = диаризация недоступна. Включена по умолчанию, если сервис задан
+    diarize_base_url: str = "http://diarizer:8000"
+    diarize_default: bool = True
 
     # --- доставка ---
     telegram_bot_token: str = ""

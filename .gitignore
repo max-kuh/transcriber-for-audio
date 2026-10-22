@@ -10,3 +10,6 @@ node_modules/
 
 # Пользовательские записи для расшифровки — не коммитить
 for_trans/
+
+# Список e-mail, которым открыт /workflows и /admin (шаблон — emails.txt.example)
+deploy/oauth2-proxy/emails.txt

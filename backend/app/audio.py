@@ -79,3 +79,18 @@ async def extract(path: Path, start: float, end: float, out: Path) -> Path:
         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k", str(out),
     )
     return out
+
+
+async def prepare(path: Path, out: Path, start: float | None = None, end: float | None = None) -> Path:
+    """Дорожка из любого аудио/видео → 16 кГц моно Opus, опционально только [start, end).
+
+    Нужна для режима «загрузка как есть»: 800 МБ видео превращаются в десятки мегабайт.
+    """
+    args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    if start:
+        args += ["-ss", f"{start:.3f}"]
+    if end is not None:
+        args += ["-t", f"{end - (start or 0.0):.3f}"]
+    args += ["-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k", str(out)]
+    await _run(*args)
+    return out

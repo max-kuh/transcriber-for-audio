@@ -52,10 +52,10 @@ Workflow `02-telegram-voice-bot` принимает голосовые прям�
 **На VPS:** поднимите n8n за Caddy (см. [07-vps-deploy.md](07-vps-deploy.md)), в `.env`:
 
 ```ini
-N8N_HOST=n8n.example.com
-N8N_PROTOCOL=https
-WEBHOOK_URL=https://n8n.example.com/
+PUBLIC_BASE_URL=https://transcriber.example.com
 ```
+
+`WEBHOOK_URL` и `N8N_PATH` для n8n `docker-compose.prod.yml` выставляет сам из `PUBLIC_BASE_URL`. Путь `/webhook/*` открыт без входа через oauth2-proxy — иначе Telegram не достучится.
 
 **Локально:** временный туннель
 

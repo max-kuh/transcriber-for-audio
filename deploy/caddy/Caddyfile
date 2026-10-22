@@ -1,13 +1,75 @@
-# Продакшн-фронт для VPS: автоматический Let's Encrypt + проксирование.
-# Подставьте свои домены и e-mail.
+# Продакшн-фронт: TLS (Let's Encrypt), статика, API, n8n и админка за oauth2-proxy.
+# Адрес и e-mail берутся из .env (SITE_ADDRESS, ACME_EMAIL):
+#   VPS:       SITE_ADDRESS=transcriber.example.com
+#   локально:  SITE_ADDRESS=:80 (чистый http, без TLS; порт на хосте — CADDY_HTTP_PORT)
 {
-    email admin@example.com
+    email {$ACME_EMAIL:admin@example.com}
 }
 
-transcriber.example.com {
+# Страницы: без сессии — редирект на вход через провайдера, после входа возврат на тот же адрес
+(auth_page) {
+    forward_auth oauth2-proxy:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-User X-Auth-Request-Email
+        @unauthenticated status 401
+        handle_response @unauthenticated {
+            redir * /oauth2/start?rd={http.request.orig_uri} 302
+        }
+    }
+}
+
+# API: без сессии — 401 (редирект сломал бы fetch)
+(auth_api) {
+    forward_auth oauth2-proxy:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-User X-Auth-Request-Email
+    }
+}
+
+{$SITE_ADDRESS:transcriber.example.com} {
     encode zstd gzip
     request_body {
         max_size 1024MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "no-referrer"
+    }
+
+    # Эндпоинты самого oauth2-proxy: вход, callback, выход, userinfo
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+
+    # Вебхуки n8n открыты намеренно: их вызывают backend и Telegram, защита — токен
+    # (X-Transcriber-Token) и секрет Telegram внутри workflow
+    @n8n_hooks path /webhook/* /webhook-test/* /webhook-waiting/*
+    handle @n8n_hooks {
+        reverse_proxy n8n:5678
+    }
+
+    # Редактор workflow. n8n отдаёт ассеты и REST с корня, а префикс /workflows/ вписывает
+    # только в HTML (N8N_PATH), поэтому префикс срезаем перед проксированием
+    redir /workflows /workflows/ 308
+    handle /workflows/* {
+        import auth_page
+        uri strip_prefix /workflows
+        reverse_proxy n8n:5678
+    }
+
+    @admin path /admin /admin/*
+    handle @admin {
+        import auth_page
+        root * /srv/frontend
+        file_server
+    }
+
+    # Админский API сначала проходит oauth2-proxy, затем (как и остальной /jobs) X-API-Key
+    handle /api/v1/admin/* {
+        import auth_api
+        reverse_proxy api:8000
     }
 
     handle /api/* {
@@ -15,22 +77,10 @@ transcriber.example.com {
     }
 
     handle {
+        header Cross-Origin-Opener-Policy   "same-origin"
+        header Cross-Origin-Embedder-Policy "require-corp"
         root * /srv/frontend
         try_files {path} /index.html
         file_server
     }
-
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options    "nosniff"
-        Referrer-Policy           "no-referrer"
-        Cross-Origin-Opener-Policy   "same-origin"
-        Cross-Origin-Embedder-Policy "require-corp"
-    }
-}
-
-# Панель n8n — отдельный поддомен, закрыта basic-auth самим n8n
-n8n.example.com {
-    encode zstd gzip
-    reverse_proxy n8n:5678
 }

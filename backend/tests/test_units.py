@@ -106,7 +106,7 @@ def test_split_prefers_sentence_boundaries():
 
 # --- нормализация -----------------------------------------------------------
 def test_normalize_keeps_timestamps_and_falls_back(monkeypatch):
-    async def fake_chat(messages):
+    async def fake_chat(messages, **kwargs):
         assert "СТРОКИ:" in messages[-1]["content"]
         # вторую строку модель «потеряла», третью — вернула с мусором вокруг
         return "Вот результат:\n1| Middle-аналитик, привет.\n3| Пишем в Kafka.\nспасибо"
@@ -124,7 +124,7 @@ def test_normalize_keeps_timestamps_and_falls_back(monkeypatch):
 
 
 def test_normalize_batch_failure_keeps_original(monkeypatch):
-    async def broken_chat(messages):
+    async def broken_chat(messages, **kwargs):
         raise llm.LLMError("LLM 500")
 
     monkeypatch.setattr(llm, "_chat", broken_chat)
@@ -184,9 +184,130 @@ def test_cut_points_follow_pauses():
 
 
 def test_normalize_rejects_inflated_line(monkeypatch):
-    async def looping_chat(messages):
+    async def looping_chat(messages, **kwargs):
         return "1| " + "вот так, " * 100
 
     monkeypatch.setattr(llm, "_chat", looping_chat)
     fixed, _ = asyncio.run(llm.normalize([Segment(start=0, end=1, text="вот так")], ""))
     assert fixed[0].text == "вот так"
+
+
+# --- диаризация --------------------------------------------------------------
+def test_diarize_assigns_by_max_overlap_and_numbers_by_appearance():
+    from app import diarize
+
+    turns = [(0.0, 5.0, 7), (5.0, 12.0, 3)]  # номера из сервиса произвольные
+    segments = [
+        Segment(start=0, end=4, text="Расскажите о себе."),
+        Segment(start=4, end=11, text="Работаю аналитиком."),  # 1 с у первого, 6 с у второго
+        Segment(start=13, end=14, text="Понятно."),  # вне речи -> ближайший (второй)
+    ]
+    out = diarize.assign(segments, turns)
+    assert [s.speaker for s in out] == ["Спикер 1", "Спикер 2", "Спикер 2"]
+
+
+def test_diarize_assign_without_turns_is_noop():
+    from app import diarize
+
+    segments = [Segment(start=0, end=1, text="раз")]
+    assert diarize.assign(segments, []) == segments
+
+
+def test_dialogue_merges_consecutive_replies():
+    from app import diarize
+
+    segments = [
+        Segment(start=0, end=1, text="Привет.", speaker="Спикер 1"),
+        Segment(start=1, end=2, text="Как дела?", speaker="Спикер 1"),
+        Segment(start=2, end=3, text="Нормально.", speaker="Спикер 2"),
+    ]
+    assert diarize.dialogue(segments) == "Спикер 1: Привет. Как дела?\n\nСпикер 2: Нормально."
+
+
+def test_normalize_keeps_speakers(monkeypatch):
+    async def fake_chat(messages, **kwargs):
+        return "1| Привет."
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    fixed, _ = asyncio.run(llm.normalize([Segment(start=0, end=1, text="привет", speaker="Спикер 1")], ""))
+    assert fixed[0].speaker == "Спикер 1"
+
+
+def test_normalize_token_budget_scales_with_batch(monkeypatch):
+    seen = {}
+
+    async def fake_chat(messages, max_tokens=None):
+        seen["max_tokens"] = max_tokens
+        return ""
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    asyncio.run(llm._normalize_lines(["слово " * 1000]))
+    assert seen["max_tokens"] > 2048  # крупная пачка не должна обрезаться лимитом LLM_MAX_TOKENS
+
+
+# --- режим конвейера --------------------------------------------------------
+class FakeRedis:
+    def __init__(self):
+        self.data = {}
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def set(self, key, value, ex=None):
+        self.data[key] = value
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.storage import Storage
+
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    return Storage(FakeRedis())
+
+
+def test_pipeline_mode_falls_back_to_env_default(store, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "pipeline_mode", "n8n")
+    assert asyncio.run(store.get_pipeline_mode()) == "n8n"
+
+
+def test_pipeline_mode_switch_applies_without_restart(store):
+    async def scenario():
+        before = await store.get_pipeline_mode()
+        await store.set_pipeline_mode("n8n")
+        return before, await store.get_pipeline_mode()
+
+    assert asyncio.run(scenario()) == ("direct", "n8n")
+
+
+def test_pipeline_mode_ignores_garbage_in_redis(store):
+    store.redis.data["transcriber:pipeline_mode"] = "chaos"
+    assert asyncio.run(store.get_pipeline_mode()) == "direct"
+
+
+def test_pipeline_uses_mode_frozen_in_job(store, monkeypatch):
+    """Переключение не меняет режим уже поставленной задачи."""
+    from app import pipeline
+    from app.config import settings
+
+    called = []
+
+    async def fake_n8n(job, path):
+        called.append(job.id)
+        return JobResult(text="из n8n")
+
+    monkeypatch.setattr(pipeline, "_run_n8n", fake_n8n)
+    monkeypatch.setattr(settings, "pipeline_mode", "direct")
+
+    async def scenario():
+        job = make_job(pipeline_mode="n8n")
+        await store.save(job)
+        store.upload_path(job.id, job.filename).write_bytes(b"x")
+        await pipeline.process(job.id, store)
+        return await store.get(job.id)
+
+    done = asyncio.run(scenario())
+    assert called == ["test"]
+    assert done.status == "done" and done.result.text == "из n8n"

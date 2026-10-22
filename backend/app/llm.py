@@ -31,7 +31,7 @@ class LLMError(RuntimeError):
     pass
 
 
-async def _chat(messages: list[dict[str, str]]) -> str:
+async def _chat(messages: list[dict[str, str]], max_tokens: int | None = None) -> str:
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if settings.llm_api_key:
@@ -41,9 +41,11 @@ async def _chat(messages: list[dict[str, str]]) -> str:
         "model": settings.llm_model,
         "messages": messages,
         "temperature": settings.llm_temperature,
-        "max_tokens": settings.llm_max_tokens,
+        "max_tokens": max_tokens or settings.llm_max_tokens,
         "stream": False,
     }
+    if settings.llm_reasoning_effort:
+        body["reasoning_effort"] = settings.llm_reasoning_effort
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         response = await client.post(url, json=body, headers=headers)
     if response.status_code >= 400:
@@ -122,11 +124,14 @@ def _plausible(original: str, fixed: str) -> bool:
 async def _normalize_lines(lines: list[str]) -> list[str]:
     """Одна пачка. Строки, которые модель потеряла или сломала, остаются исходными."""
     numbered = "\n".join(f"{i}| {line}" for i, line in enumerate(lines, 1))
+    # ответ ≈ вход по длине (+ нумерация); русский ≈ 2 символа на токен, берём с запасом
+    budget = settings.normalize_max_tokens or max(settings.llm_max_tokens, len(numbered) * 3 // 4 + 256)
     answer = await _chat(
         [
             {"role": "system", "content": prompts.NORMALIZE_SYSTEM},
             {"role": "user", "content": prompts.build_normalize(numbered, glossary())},
-        ]
+        ],
+        max_tokens=budget,
     )
     result = list(lines)
     for row in answer.splitlines():

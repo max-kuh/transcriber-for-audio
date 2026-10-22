@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transcriber — администрирование</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙</text></svg>" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🎙</span><span>Transcriber · администрирование</span></div>
+  <div class="topbar-right">
+    <span id="user" class="muted small"></span>
+    <a id="link-logout" class="btn hidden" href="/oauth2/sign_out?rd=/">Выйти</a>
+    <a class="btn" href="../">К расшифровке</a>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Режим конвейера</h2>
+    <p class="muted">
+      <strong>direct</strong> — backend сам вызывает ASR → LLM → доставку.
+      <strong>n8n</strong> — файл целиком уходит в n8n, вся логика в workflow.
+    </p>
+    <div class="actions">
+      <label class="check"><input type="radio" name="mode" value="direct" /> direct</label>
+      <label class="check"><input type="radio" name="mode" value="n8n" /> n8n</label>
+      <button id="btn-apply" class="primary" type="button">Применить</button>
+      <span id="status" class="muted"></span>
+    </div>
+    <p class="muted small">
+      Режим читается при создании каждой задачи — перезапуск не нужен.
+      Задачи, уже стоящие в очереди, дойдут в том режиме, в котором были созданы.
+      Значение по умолчанию (<code>PIPELINE_MODE</code> в .env): <span id="default">—</span>.
+    </p>
+  </section>
+
+  <section id="card-workflows" class="card hidden">
+    <h2>n8n</h2>
+    <p><a class="btn" href="/workflows/" target="_blank" rel="noopener">Открыть редактор workflow</a></p>
+  </section>
+</main>
+
+<script type="module" src="../assets/admin.js"></script>
+</body>
+</html>

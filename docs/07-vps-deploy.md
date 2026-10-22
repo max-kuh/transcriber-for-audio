@@ -42,12 +42,15 @@ PUBLIC_BASE_URL=https://transcriber.example.com
 CORS_ORIGINS=https://transcriber.example.com
 API_KEY=<openssl rand -hex 24>
 
-N8N_HOST=n8n.example.com
-N8N_PROTOCOL=https
-WEBHOOK_URL=https://n8n.example.com/
 N8N_ENCRYPTION_KEY=<openssl rand -hex 32>
-N8N_BASIC_AUTH_PASSWORD=<длинный пароль>
 N8N_WEBHOOK_TOKEN=<openssl rand -hex 24>
+
+SITE_ADDRESS=transcriber.example.com
+ACME_EMAIL=you@example.com
+OAUTH2_PROXY_PROVIDER=google
+OAUTH2_PROXY_CLIENT_ID=<из консоли провайдера>
+OAUTH2_PROXY_CLIENT_SECRET=<из консоли провайдера>
+OAUTH2_PROXY_COOKIE_SECRET=<openssl rand -base64 24 | tr -- '+/' '-_'>
 
 RETENTION_HOURS=6
 MAX_UPLOAD_MB=256
@@ -55,17 +58,20 @@ MAX_UPLOAD_MB=256
 
 ```bash
 chmod 600 .env
+cp deploy/oauth2-proxy/emails.txt.example deploy/oauth2-proxy/emails.txt   # или make init
 ```
+
+В `deploy/oauth2-proxy/emails.txt` — e-mail тех, кому открыты `/workflows` и `/admin`, по одному в строке. Пустой или не заполненный список = не пустит никого.
 
 ## Шаг 3. DNS и TLS
 
-Заведите A-записи `transcriber.example.com` и `n8n.example.com` на IP сервера. Подставьте домены и e-mail в `deploy/caddy/Caddyfile`.
+Заведите A-запись `transcriber.example.com` на IP сервера. Домен и e-mail Caddy берёт из `SITE_ADDRESS` и `ACME_EMAIL` в `.env`, править Caddyfile не нужно. Отдельный поддомен `n8n.*` больше не используется: редактор n8n живёт на основном домене под `/workflows/`.
 
 ```bash
 make up-prod
 ```
 
-Оверрайд `docker-compose.prod.yml` поднимает Caddy на 80/443 (сертификаты Let's Encrypt выпускаются автоматически) и **снимает публикацию портов** с `api`, `asr`, `ollama`, `n8n` — они остаются доступны только внутри docker-сети. Это важно: без этого Ollama и Speaches торчали бы в интернет без авторизации.
+Оверрайд `docker-compose.prod.yml` поднимает Caddy на 80/443 (сертификаты Let's Encrypt выпускаются автоматически), oauth2-proxy и **снимает публикацию портов** с `api`, `asr`, `ollama`, `n8n` — они остаются доступны только внутри docker-сети. Это важно: без этого Ollama и Speaches торчали бы в интернет без авторизации.
 
 Проверка:
 
@@ -73,6 +79,43 @@ make up-prod
 curl -s https://transcriber.example.com/api/v1/health
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
+
+## Вход через oauth2-proxy
+
+Что за ним закрыто, а что нет:
+
+| Маршрут | Доступ |
+|---|---|
+| `/`, `/api/v1/*` | как раньше: открыто, `/jobs*` — по `X-API-Key` |
+| `/admin/`, `/api/v1/admin/*` | только сессия oauth2-proxy (+ `X-API-Key`, если задан). Без сессии страница редиректит на вход, API отвечает `401` |
+| `/workflows/` (редактор n8n) | только сессия oauth2-proxy; дальше — собственный логин n8n |
+| `/webhook/*`, `/webhook-test/*` | открыто намеренно: их вызывают backend и Telegram, защита — `X-Transcriber-Token` и секрет Telegram |
+
+**Callback** — `<PUBLIC_BASE_URL>/oauth2/callback`; его нужно добавить в консоли провайдера (Google: *Credentials → OAuth client → Authorized redirect URIs*; GitHub: *OAuth Apps → Authorization callback URL*). Другой провайдер — `OAUTH2_PROXY_PROVIDER`; для `oidc` (Keycloak, Authentik) добавьте в `environment` сервиса `oauth2-proxy` переменную `OAUTH2_PROXY_OIDC_ISSUER_URL`.
+
+### Проверка на localhost до публикации
+
+В консоли провайдера заведите клиента с callback `http://localhost:8081/oauth2/callback` (Google и GitHub такой адрес разрешают) и в `.env` поставьте:
+
+```ini
+SITE_ADDRESS=:80
+CADDY_HTTP_PORT=8081
+PUBLIC_BASE_URL=http://localhost:8081
+OAUTH2_PROXY_COOKIE_SECURE=false
+```
+
+```bash
+make up-prod
+```
+
+Оверрайд заменяет dev-фронтенд на Caddy, поэтому стек будет на <http://localhost:8081> (а не 8080), а порты `api`/`n8n` на хосте закрываются. Проверьте:
+
+1. <http://localhost:8081/admin/> без входа → редирект к провайдеру; после входа — страница переключателя режима;
+2. e-mail не из `emails.txt` → `403 Forbidden` на `/oauth2/callback`;
+3. <http://localhost:8081/workflows/> открывает редактор n8n;
+4. переключите режим на `/admin` и отправьте файл — в `GET /jobs/{id}` поле `pipeline_mode` совпадёт с выбранным.
+
+Для публикации верните значения VPS (`SITE_ADDRESS`, `CADDY_HTTP_PORT=80`, `PUBLIC_BASE_URL`, `OAUTH2_PROXY_COOKIE_SECURE=true`) и добавьте боевой callback у провайдера.
 
 ## Шаг 4. Модели
 
@@ -115,7 +158,7 @@ sudo systemctl enable --now transcriber
 | Мера | Как |
 |---|---|
 | API закрыт ключом | `API_KEY` в `.env`, клиент вводит его в «Настройках» UI |
-| Панель n8n | basic-auth + отдельный поддомен; при желании ограничьте по IP в Caddy (`@allowed remote_ip …`) |
+| Панель n8n и `/admin` | oauth2-proxy (список e-mail в `emails.txt`) + собственный логин n8n и `X-API-Key`; при желании ограничьте по IP в Caddy (`@allowed remote_ip …`) |
 | Вебхуки n8n | общий секрет `X-Transcriber-Token`, проверяется первым Code-узлом |
 | Внутренние сервисы | не публикуются наружу в prod-оверрайде |
 | Данные | исходники удаляются сразу после обработки, метаданные — через `RETENTION_HOURS` |

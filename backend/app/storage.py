@@ -9,9 +9,10 @@ from pathlib import Path
 import redis.asyncio as aioredis
 
 from .config import settings
-from .schemas import Job
+from .schemas import Job, PipelineMode
 
 JOB_PREFIX = "transcriber:job:"
+PIPELINE_MODE_KEY = "transcriber:pipeline_mode"
 
 
 def _now() -> datetime:
@@ -57,6 +58,15 @@ class Storage:
                 jobs.append(Job.model_validate_json(raw))
         jobs.sort(key=lambda j: j.created_at, reverse=True)
         return jobs[:limit]
+
+    # --- режим конвейера -------------------------------------------------------
+    async def get_pipeline_mode(self) -> PipelineMode:
+        """Читается при постановке каждой задачи: переключение не требует перезапуска."""
+        raw = await self.redis.get(PIPELINE_MODE_KEY)
+        return raw if raw in ("direct", "n8n") else settings.pipeline_mode
+
+    async def set_pipeline_mode(self, mode: PipelineMode) -> None:
+        await self.redis.set(PIPELINE_MODE_KEY, mode)
 
     async def purge_expired_files(self) -> int:
         """Удаляет исходники старше RETENTION_HOURS."""

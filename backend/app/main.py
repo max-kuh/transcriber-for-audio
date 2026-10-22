@@ -13,9 +13,9 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from . import asr, llm
+from . import asr, diarize, llm
 from .config import settings
-from .schemas import Job, JobCreated, JobOptions
+from .schemas import Job, JobCreated, JobOptions, PipelineModeBody, PipelineModeState
 from .storage import Storage, make_redis
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     app.state.redis = make_redis()
     app.state.storage = Storage(app.state.redis)
     app.state.queue = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    log.info("API запущен, режим конвейера: %s", settings.pipeline_mode)
+    log.info("API запущен, режим конвейера: %s", await app.state.storage.get_pipeline_mode())
     yield
     await app.state.redis.aclose()
     await app.state.queue.aclose()
@@ -65,27 +65,52 @@ def storage() -> Storage:
 # Служебные
 # ---------------------------------------------------------------------------
 @app.get("/api/v1/health")
-async def health() -> dict:
-    return {"status": "ok", "pipeline_mode": settings.pipeline_mode}
+async def health(store: Storage = Depends(storage)) -> dict:
+    return {"status": "ok", "pipeline_mode": await store.get_pipeline_mode()}
 
 
 @app.get("/api/v1/health/deps")
 async def health_deps() -> dict:
-    return {"asr": await asr.health(), "llm": await llm.health()}
+    deps = {"asr": await asr.health(), "llm": await llm.health()}
+    if diarize.available():
+        deps["diarizer"] = await diarize.health()
+    return deps
 
 
 @app.get("/api/v1/config")
-async def public_config() -> dict:
+async def public_config(store: Storage = Depends(storage)) -> dict:
     """То, что нужно фронтенду, чтобы нарисовать форму."""
     return {
         "max_upload_mb": settings.max_upload_mb,
         "default_model": settings.whisper__model,
         "llm_model": settings.llm_model,
-        "pipeline_mode": settings.pipeline_mode,
+        "pipeline_mode": await store.get_pipeline_mode(),
+        "diarize_available": diarize.available(),
+        "diarize_default": settings.diarize_default and diarize.available(),
         "auth_required": bool(settings.api_key),
         "telegram_configured": bool(settings.telegram_bot_token),
         "webhook_configured": bool(settings.outbound_webhook_url),
     }
+
+
+# ---------------------------------------------------------------------------
+# Администрирование (в prod дополнительно закрыто oauth2-proxy на уровне Caddy)
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/admin/pipeline-mode", response_model=PipelineModeState, dependencies=[Depends(require_key)])
+async def get_pipeline_mode(store: Storage = Depends(storage)) -> PipelineModeState:
+    return PipelineModeState(mode=await store.get_pipeline_mode(), default=settings.pipeline_mode)
+
+
+@app.put("/api/v1/admin/pipeline-mode", response_model=PipelineModeState, dependencies=[Depends(require_key)])
+async def set_pipeline_mode(
+    body: PipelineModeBody,
+    x_auth_request_email: str | None = Header(default=None),
+    store: Storage = Depends(storage),
+) -> PipelineModeState:
+    """Действует на задачи, созданные после переключения; уже поставленные идут в своём режиме."""
+    await store.set_pipeline_mode(body.mode)
+    log.info("режим конвейера → %s (%s)", body.mode, x_auth_request_email or "без oauth2-proxy")
+    return PipelineModeState(mode=body.mode, default=settings.pipeline_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +150,7 @@ async def create_job(
         filename=file.filename or path.name,
         size_bytes=size,
         options=parsed,
+        pipeline_mode=await store.get_pipeline_mode(),
         created_at=now,
         updated_at=now,
     )

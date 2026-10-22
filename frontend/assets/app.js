@@ -14,6 +14,7 @@ const state = {
   region: null,
   ws: null,
   regions: null,
+  raw: false,        // режим «как есть»: файл уходит на сервер без обработки в браузере
   jobId: null,
   objectUrl: null,
 };
@@ -72,13 +73,35 @@ function bindDropzone() {
   });
 }
 
+const RAW_THRESHOLD = 300 * 1024 * 1024; // крупнее браузер декодирует в память плохо
+
+function enterRawMode(file, reason) {
+  state.file = file;
+  state.raw = true;
+  state.original = state.buffer = null;
+  if (state.ws) { state.ws.destroy(); state.ws = null; }
+  $("file-info").classList.remove("hidden");
+  $("file-info").innerHTML = `
+    <span><strong>${escapeHtml(file.name)}</strong></span>
+    <span>${A.formatBytes(file.size)}</span>
+    <span>загрузка как есть${reason ? ` (${escapeHtml(reason)})` : ""}</span>`;
+  $("step-edit").classList.add("hidden");
+  $("raw-trim").classList.remove("hidden");
+  $("step-transcribe").classList.remove("hidden");
+}
+
 async function loadFile(file) {
+  state.raw = false;
+  $("raw-trim").classList.add("hidden");
+  if ($("opt-raw").checked) return enterRawMode(file, "выбрано вручную");
+  if (file.size > RAW_THRESHOLD) return enterRawMode(file, "файл больше 300 МБ");
+
   state.file = file;
   setEditStatus("Декодирование…");
   try {
     state.original = await A.decode(file);
   } catch (err) {
-    setEditStatus(`Не удалось декодировать файл: ${err.message}`, true);
+    enterRawMode(file, "браузер не смог декодировать");
     return;
   }
   state.buffer = cloneBuffer(state.original);
@@ -240,6 +263,12 @@ function bindTranscribe() {
   });
 
   $("btn-send").addEventListener("click", submit);
+
+  // Диаризация включена по умолчанию, если сервис подключён
+  api.config().then((c) => {
+    $("opt-diarize").checked = !!c.diarize_default;
+    $("opt-diarize").disabled = !c.diarize_available;
+  }).catch(() => {});
 }
 
 function collectOptions() {
@@ -249,6 +278,11 @@ function collectOptions() {
     prompt: $("opt-prompt").value.trim() || null,
     timestamps: $("opt-timestamps").checked,
     normalize: $("opt-normalize").checked,
+    diarize: $("opt-diarize").checked,
+    num_speakers: parseInt($("opt-speakers").value, 10) || null,
+    raw: state.raw,
+    trim_start: state.raw ? parseTime($("raw-start").value) : null,
+    trim_end: state.raw ? parseTime($("raw-end").value) : null,
     post_action: $("opt-post").value,
     post_instruction: $("opt-instruction").value.trim() || null,
     target_language: $("opt-target-language").value.trim() || null,
@@ -260,19 +294,26 @@ function collectOptions() {
 }
 
 async function submit() {
-  if (!state.buffer) return;
+  if (!state.buffer && !state.raw) return;
   const button = $("btn-send");
   button.disabled = true;
   $("progress-wrap").classList.remove("hidden");
-  setSendStatus("Подготовка аудио (моно 16 кГц)…");
 
   try {
-    const prepared = await A.toWhisperFormat(state.buffer);
-    const blob = A.encodeWav(prepared);
+    let blob, filename;
+    if (state.raw) {
+      blob = state.file;
+      filename = state.file.name;
+    } else {
+      setSendStatus("Подготовка аудио (моно 16 кГц)…");
+      blob = A.encodeWav(await A.toWhisperFormat(state.buffer));
+      filename = `${baseName(state.file?.name || "audio")}.wav`;
+    }
     setSendStatus(`Отправка ${A.formatBytes(blob.size)}…`);
-
-    const filename = `${baseName(state.file?.name || "audio")}.wav`;
-    const created = await api.createJob(blob, filename, collectOptions());
+    const created = await api.createJob(blob, filename, collectOptions(), (share) => {
+      $("progress-bar").style.width = `${Math.round(share * 10)}%`; // загрузка — первые 10% полосы
+      setSendStatus(`Отправка ${A.formatBytes(blob.size)}: ${Math.round(share * 100)}%`);
+    });
     state.jobId = created.id;
 
     const job = await pollJob(created.id, (j) => {
@@ -382,6 +423,13 @@ function cloneBuffer(buffer) {
     copy.copyToChannel(buffer.getChannelData(ch).slice(), ch);
   }
   return copy;
+}
+
+/** «90», «1:30», «1:02:03» → секунды; пусто или мусор → null. */
+function parseTime(text) {
+  const parts = text.trim().replace(",", ".").split(":");
+  if (!text.trim() || parts.some((p) => p === "" || isNaN(Number(p)))) return null;
+  return parts.reduce((sum, p) => sum * 60 + Number(p), 0);
 }
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
