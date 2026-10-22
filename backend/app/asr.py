@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import zlib
 from collections.abc import Awaitable, Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +27,156 @@ LOOP_WINDOW = 400
 
 ProgressCallback = Callable[[int, int], Awaitable[None]]
 
+# Типовые «титры», которые Whisper вставляет на тишине и шуме (выучены на русских субтитрах).
+# Регистр не важен; свои шаблоны добавляются файлом ASR_HALLUCINATION_FILE
+DEFAULT_HALLUCINATIONS = (
+    r"Редактор субтитров(?:\s+[А-ЯЁA-Z]\.\s*[А-ЯЁ][а-яё]+)?",
+    r"Корректор\s+[А-ЯЁA-Z]\.\s*[А-ЯЁ][а-яё]+",
+    r"Субтитры (?:сделал|создавал|делал|подготовил)\s+DimaTorzok",
+    r"Субтитры создавались сообществом Amara\.org",
+    r"Продолжение следует",
+    r"Спасибо за просмотр",
+    r"Подписывайтесь на (?:наш )?канал",
+)
+# Петля — n-грамма из 1–4 слов, повторённая подряд
+MAX_NGRAM = 4
+_PUNCT_TAIL = re.compile(r"[^\w]*$")
+_NON_WORD = re.compile(r"[^\w]+")
+_LEADING_PUNCT = re.compile(r"^[\s,;:.!?…—–-]+")
+
 
 class ASRError(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Очистка результата: галлюцинации-«титры» и петли из коротких фраз
+# ---------------------------------------------------------------------------
+@lru_cache
+def hallucination_pattern() -> re.Pattern[str] | None:
+    """Встроенные шаблоны + строки файла ASR_HALLUCINATION_FILE (по регулярке на строку, # — комментарий)."""
+    patterns = list(DEFAULT_HALLUCINATIONS)
+    if settings.asr_hallucination_file:
+        path = Path(settings.asr_hallucination_file)
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            log.warning("файл галлюцинаций %s не найден — только встроенный список", path)
+            lines = []
+        for line in (line.strip() for line in lines):
+            if not line or line.startswith("#"):
+                continue
+            try:
+                re.compile(line)
+            except re.error as exc:
+                log.warning("шаблон галлюцинации %r пропущен: %s", line, exc)
+                continue
+            patterns.append(line)
+    if not patterns:
+        return None
+    # фраза целиком, вместе с хвостовой пунктуацией («Продолжение следует...»)
+    body = "|".join(f"(?:{p})" for p in patterns)
+    return re.compile(rf"\b(?:{body})(?!\w)[.!?…]*", re.IGNORECASE)
+
+
+def drop_hallucinations(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Вырезает фразы-галлюцинации из сегментов; опустевший сегмент удаляется."""
+    pattern = hallucination_pattern()
+    if pattern is None:
+        return segments
+    out = []
+    for segment in segments:
+        text, hits = pattern.subn("", segment["text"])
+        if hits:
+            text = _LEADING_PUNCT.sub("", re.sub(r"\s{2,}", " ", text)).strip()
+            if not re.search(r"\w", text):
+                continue
+            segment = {**segment, "text": text}
+        out.append(segment)
+    return out
+
+
+def collapse_repeats(segments: list[dict[str, Any]], threshold: int, keep: int = 1) -> list[dict[str, Any]]:
+    """Схлопывает петли: n-грамма (1–4 слова), повторённая подряд ≥ threshold раз, остаётся keep раз.
+
+    Повтор ищется по словам всех сегментов подряд, поэтому ловится и петля через границы
+    сегментов. Слова сравниваются без регистра и пунктуации. Таймкоды оставшихся сегментов
+    не меняются; сегмент, из которого ушли все слова, удаляется.
+    """
+    if threshold < 2:
+        return segments
+    keep = max(1, min(keep, threshold - 1))
+    words = [s["text"].split() for s in segments]
+    flat = [(si, wi) for si, ws in enumerate(words) for wi in range(len(ws))]
+    keys = [_NON_WORD.sub("", words[si][wi].lower()) for si, wi in flat]
+
+    drop: set[int] = set()
+    tails: dict[int, str] = {}  # слово -> новая хвостовая пунктуация
+    i = 0
+    while i < len(keys):
+        best_n, best_k = 0, 0
+        for n in range(1, MAX_NGRAM + 1):
+            if i + n * threshold > len(keys):
+                break
+            gram = keys[i : i + n]
+            if "" in gram:
+                continue
+            k = 1
+            while keys[i + k * n : i + (k + 1) * n] == gram:
+                k += 1
+            if k >= threshold and k * n > best_k * best_n:
+                best_n, best_k = n, k
+        if not best_n:
+            i += 1
+            continue
+        kept_end, run_end = i + keep * best_n, i + best_k * best_n
+        drop.update(range(kept_end, run_end))
+        # последнему оставленному слову — пунктуацию конца петли («REST API, … REST API.» → «REST API.»)
+        si, wi = flat[run_end - 1]
+        tails[kept_end - 1] = _PUNCT_TAIL.search(words[si][wi]).group()
+        log.info("петля «%s» ×%d схлопнута до %d", " ".join(keys[i : i + best_n]), best_k, keep)
+        i = run_end
+
+    if not drop:
+        return segments
+    changed: dict[int, list[str]] = {}
+    for index, (si, wi) in enumerate(flat):
+        if index in tails:
+            word = changed.setdefault(si, list(words[si]))[wi]
+            changed[si][wi] = word[: len(word) - len(_PUNCT_TAIL.search(word).group())] + tails[index]
+        if index in drop:
+            changed.setdefault(si, list(words[si]))[wi] = ""
+    out = []
+    for si, segment in enumerate(segments):
+        if si in changed:
+            text = " ".join(w for w in changed[si] if w)
+            if not text:
+                continue
+            segment = {**segment, "text": text}
+        out.append(segment)
+    return out
+
+
+def clean(result: dict[str, Any]) -> dict[str, Any]:
+    """Применяет фильтр галлюцинаций и схлопывание петель к результату ASR.
+
+    Есть сегменты — чистятся они, текст пересобирается из них; нет — текст как один сегмент.
+    """
+    def run(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if settings.asr_hallucination_filter:
+            segments = drop_hallucinations(segments)
+        return collapse_repeats(segments, settings.asr_repeat_threshold, settings.asr_repeat_keep)
+
+    if result["segments"]:
+        segments = run(result["segments"])
+        if segments == result["segments"]:
+            return result
+        return {**result, "segments": segments, "text": " ".join(s["text"] for s in segments)}
+    if not result["text"]:
+        return result
+    cleaned = run([{"start": 0.0, "end": 0.0, "text": result["text"]}])
+    text = cleaned[0]["text"] if cleaned else ""
+    return result if text == result["text"] else {**result, "text": text}
 
 
 def loop_score(text: str) -> float:
@@ -123,7 +272,7 @@ async def transcribe(path: Path, options: JobOptions, *, with_segments: bool = F
     chunk = settings.asr_chunk_seconds
     total = await audio.duration(path) if chunk else None
     if not total or total <= chunk * 1.5:
-        return await _request_robust(path, options, verbose=verbose)
+        return clean(await _request_robust(path, options, verbose=verbose))
 
     cuts = audio.cut_points(total, await audio.silences(path), chunk)
     bounds = list(zip([0.0, *cuts], [*cuts, total]))
@@ -148,9 +297,11 @@ async def transcribe(path: Path, options: JobOptions, *, with_segments: bool = F
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
+    # чистим после склейки: петля может переходить через границу кусков
+    result = clean({"text": " ".join(t for t in texts if t), "segments": segments})
     return {
-        "text": " ".join(t for t in texts if t),
-        "segments": segments if verbose else [],
+        "text": result["text"],
+        "segments": result["segments"] if verbose else [],
         "language": language,
         "duration": total,
     }

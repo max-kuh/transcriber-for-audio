@@ -173,6 +173,113 @@ def test_loop_score_separates_loop_from_speech():
     assert asr.loop_score(speech + "вот так, " * 200) > 4.0
 
 
+def seg(start: float, end: float, text: str) -> dict:
+    return Segment(start=start, end=end, text=text).model_dump()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Редактор субтитров А.Семкин", None),
+        ("Редактор субтитров А. Семкин Корректор А.Кулакова", None),
+        ("Субтитры сделал DimaTorzok", None),
+        ("Субтитры создавал DimaTorzok.", None),
+        ("Продолжение следует...", None),
+        ("Спасибо за просмотр!", None),
+        ("Подписывайтесь на канал", None),
+        ("Итак, резюмируем. Продолжение следует... Ну что, вопросы?", "Итак, резюмируем. Ну что, вопросы?"),
+    ],
+)
+def test_hallucination_phrase_removed(text, expected):
+    from app import asr
+
+    out = asr.drop_hallucinations([seg(0, 1, "До."), seg(1, 2, text), seg(2, 3, "После.")])
+    if expected is None:  # сегмент стал пустым и удалён
+        assert [(s["start"], s["text"]) for s in out] == [(0, "До."), (2, "После.")]
+    else:
+        assert out[1] == {**seg(1, 2, expected)}
+
+
+def test_hallucination_filter_keeps_normal_text():
+    from app import asr
+
+    segments = [
+        seg(0, 2, "Спасибо за ответ, продолжение темы — в следующий раз."),
+        seg(2, 4, "Редактор схем у нас PlantUML, корректор текстов — Аня."),
+        seg(4, 6, "Подписывайтесь на рассылку команды."),
+    ]
+    assert asr.drop_hallucinations(segments) == segments
+
+
+def test_hallucination_file_extends_defaults(tmp_path, monkeypatch):
+    from app import asr
+    from app.config import settings
+
+    extra = tmp_path / "hallucinations.txt"
+    extra.write_text("# свои\nСтавьте лайки\n[битая регулярка\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "asr_hallucination_file", str(extra))
+    asr.hallucination_pattern.cache_clear()
+    try:
+        out = asr.drop_hallucinations([seg(0, 1, "Ставьте лайки!"), seg(1, 2, "Продолжение следует")])
+        assert out == []
+    finally:
+        monkeypatch.undo()
+        asr.hallucination_pattern.cache_clear()
+
+
+def test_rest_api_loop_collapsed():
+    from app import asr
+
+    text = "Смотри, ER-диаграмма, " + "REST API, " * 28 + "REST API."
+    out = asr.collapse_repeats([seg(10, 40, text), seg(40, 42, "Дальше про Kafka.")], threshold=4)
+    assert [s["text"] for s in out] == ["Смотри, ER-диаграмма, REST API.", "Дальше про Kafka."]
+    assert [(s["start"], s["end"]) for s in out] == [(10, 40), (40, 42)]
+
+
+def test_normal_repeats_untouched():
+    from app import asr
+
+    segments = [seg(0, 1, "Да, да, да, именно так."), seg(1, 2, "Очень-очень важно, очень важно.")]
+    assert asr.collapse_repeats(segments, threshold=4) == segments
+
+
+def test_loop_across_segments_collapsed():
+    from app import asr
+
+    segments = [
+        seg(0, 2, "Тут у нас вот так, вот так,"),
+        seg(2, 4, "вот так, вот так,"),
+        seg(4, 6, "вот так."),
+        seg(6, 8, "Идём дальше."),
+    ]
+    out = asr.collapse_repeats(segments, threshold=4)
+    assert out == [seg(0, 2, "Тут у нас вот так."), seg(6, 8, "Идём дальше.")]
+
+
+def test_repeat_keep_and_disable():
+    from app import asr
+
+    segments = [seg(0, 1, "раз два " * 6)]
+    assert asr.collapse_repeats(segments, threshold=4, keep=2)[0]["text"] == "раз два раз два"
+    assert asr.collapse_repeats(segments, threshold=0) == segments
+
+
+def test_clean_rebuilds_text_from_segments():
+    from app import asr
+
+    result = {
+        "text": "исходный",
+        "segments": [seg(0, 1, "Привет."), seg(1, 2, "Редактор субтитров А.Семкин"), seg(2, 3, "ок " * 10)],
+        "language": "ru",
+        "duration": 3.0,
+    }
+    out = asr.clean(result)
+    assert out["text"] == "Привет. ок"
+    assert [s["start"] for s in out["segments"]] == [0, 2]
+    # без сегментов чистится сам текст
+    assert asr.clean({"text": "Итог. Продолжение следует...", "segments": []})["text"] == "Итог."
+
+
 def test_cut_points_follow_pauses():
     from app import audio
 

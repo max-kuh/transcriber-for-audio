@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     asr_chunk_seconds: int = 600
     # Порог зацикливания: коэффициент сжатия окна текста (норма 2–2.6, петля 10+)
     asr_loop_threshold: float = 4.0
+    # Вырезать типовые галлюцинации-«титры» («Редактор субтитров А.Семкин», «Продолжение следует…»)
+    asr_hallucination_filter: bool = True
+    asr_hallucination_file: str = ""  # свои регулярки, по одной на строку; дополняют встроенный список
+    # Петля из короткой фразы (1–4 слова): повтор подряд ≥ N раз схлопывается до ASR_REPEAT_KEEP (0 = выкл.)
+    asr_repeat_threshold: int = 4
+    asr_repeat_keep: int = 1
 
     # --- LLM ---
     llm_base_url: str = "http://ollama:11434/v1"
